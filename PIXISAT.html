@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<head>
+    <script src='https://cdnjs.cloudflare.com/ajax/libs/pixi.js/4.5.4/pixi.js'></script>
+</head>
+<body>
+</body>
+<script>
+const app = new PIXI.Application();
+app.renderer = new PIXI.CanvasRenderer(1000,1000);
+app.renderer.backgroundColor = 0x123123;
+app.view.style.position = 'absolute';
+app.view.style.left = 0;
+app.view.style.top = 0;
+document.body.appendChild(app.view);
+
+
+PIXI.Point.prototype.getMagnitude = function() {
+    return Math.sqrt(this.x**2 + this.y**2);
+}
+PIXI.Point.prototype.subtract = function(anotherPoint) {
+    return new PIXI.Point(this.x - anotherPoint.x, this.y - anotherPoint.y);
+}
+PIXI.Point.prototype.edge = function(anotherPoint) {
+    return this.subtract(anotherPoint);
+}
+PIXI.Point.prototype.dotProduct = function(anotherPoint) {
+    return this.x * anotherPoint.x + this.y * anotherPoint.y;
+}
+PIXI.Point.prototype.perpendicular = function() {
+    return new PIXI.Point(this.y, -this.x);
+}
+PIXI.Point.prototype.normalize = function() {
+    const m = this.getMagnitude();
+    return new PIXI.Point(this.x/m , this.y/m);
+}
+PIXI.Point.prototype.normal = function() {
+    const p = this.perpendicular();
+    return p.normalize();
+}
+
+
+PIXI.SAT = {
+    isCollide(shape1,shape2) { // return boolean
+        const axes = this.getAxes(shape1).concat(this.getAxes(shape2));
+        return !this.separationOnAxes(shape1,shape2,axes);
+    },
+    separationOnAxes(shape1,shape2,axes) {
+        let axis,
+            projection1,
+            projection2;
+
+        for(let i=0; i<axes.length; i++) {
+            axis = axes[i];
+            projection1 = this.project(shape1,axis);
+            projection2 = this.project(shape2,axis);
+
+            if(! this.overlaps(projection1,projection2)) 
+                return true;
+        }
+        return false;
+    },
+    getAxes(shape) {
+        const p1 = new PIXI.Point(),
+              p2 = new PIXI.Point(),
+              points = shape.points;
+              axes = [];
+
+        for(let i=0; i<points.length-1; i++) {
+            p1.x = points[i].x;
+            p1.y = points[i].y;
+
+            p2.x = points[i+1].x;
+            p2.y = points[i+1].y;
+
+            axes.push(p1.edge(p2).normal());
+        }
+
+        p1.x = points[points.length-1].x;
+        p1.y = points[points.length-1].y;
+        p2.x = points[0].x;
+        p2.y = points[0].y;
+
+        axes.push(p1.edge(p2).normal());
+
+        return axes;
+    },
+    project(shape,axis) {
+        const scalars = [],
+              points = shape.points;
+              p = new PIXI.Point();
+        
+        for(let point of points) {
+            p.x = point.x;
+            p.y = point.y;
+            scalars.push(p.dotProduct(axis));
+        }
+
+        return {
+            max : Math.max.apply(null,scalars),
+            min : Math.min.apply(null,scalars)
+        }
+    },
+    overlaps(p1,p2) {
+        return p1.max > p2.min && p2.max > p1.min;
+    }
+}
+
+PIXI.customGraphics = ( () => {
+    const children = [],
+          draggingEventPool = [];
+
+    return class customGraphics extends PIXI.Graphics {
+        constructor() {
+            children.push(super());
+            this.points = [];
+            this.interactive = true;
+        }
+        static getChildren() {
+            return children;
+        }
+        static getDraggingEventPool() {
+            return draggingEventPool;
+        }
+        static isPointInPath(polygon,mouse) {
+            const ctx = app.renderer.context;
+        
+            polygon = polygon.points;
+            ctx.beginPath();
+            ctx.moveTo(polygon[0].x,polygon[0].y);
+            for(let i=1; i<polygon.length; i++) 
+                ctx.lineTo(polygon[i].x,polygon[i].y);
+            ctx.closePath();
+
+            if(ctx.isPointInPath(mouse.x,mouse.y))
+                return true;
+            else  
+                return false;
+        }
+        // convert from path to single arr
+        convertToArr() {
+            const arr = [];
+            for(let i=0; i<this.points.length; i++) {
+                arr.push(this.points[i].x);
+                arr.push(this.points[i].y);
+            }
+            return arr;
+        }
+        // update x,y (path)
+        updatePath(dx,dy) {
+            for(let i=0; i<this.points.length; i++) {
+                this.points[i].x += dx;
+                this.points[i].y += dy;
+            }
+        }
+        // draw polygon
+        drawPolygon(path) {
+            if(path) {
+                for(let i=0,j=0; i<path.length; i+=2) 
+                    this.points[j++] = new PIXI.Point(path[i],path[i+1]);
+            }
+            super.drawPolygon(this.convertToArr());
+        }
+        // register dragging event
+        registerDraggingEvent() {
+            draggingEventPool.push(this);
+        }
+        collisionCheckFromSAT(shape1,shape2) {
+            return PIXI.SAT.isCollide(shape1,shape2);
+        }
+    }
+})();
+
+
+
+
+// test
+let draggingShape;
+let mouseFlag = false;
+let prev_location = new PIXI.Point();
+let prev_total = new PIXI.Point();
+let a = new PIXI.customGraphics();
+a.beginFill(0xFFFFFF)
+a.drawPolygon([100,100,100,200,200,200,200,100]);
+a.registerDraggingEvent();
+app.stage.addChild(a);
+
+let b = new PIXI.customGraphics();
+b.beginFill(0xFFFFFF);
+b.drawPolygon([300,300, 400,300, 400,400, 300,400])
+b.registerDraggingEvent();
+app.stage.addChild(b);
+
+let c = new PIXI.customGraphics();
+c.beginFill(0xFFF12F);
+c.drawPolygon([500,500, 550,550, 525,600, 475,600, 450,550]);
+c.registerDraggingEvent();
+app.stage.addChild(c)
+
+let text = new PIXI.Text('',{
+    fontFamily: 'Arial',
+    fontSize: 36,
+    fontStyle: 'italic',
+    fontWeight: 'bold',
+});
+app.stage.addChild(text);
+
+app.view.onmousedown = e => {
+    const pool = PIXI.customGraphics.getDraggingEventPool(),
+          mouse = new PIXI.Point(e.clientX,e.clientY);
+
+    for(let i=0; i<pool.length; i++) {
+        if(PIXI.customGraphics.isPointInPath(pool[i],mouse)) {
+            draggingShape = pool[i];
+            break;
+        }
+    }
+
+    prev_location.x = e.clientX,
+    prev_location.y = e.clientY;  
+
+    mouseFlag = true;
+}
+app.view.onmouseup = e => {
+    mouseFlag = false;
+    draggingShape = undefined;
+}
+app.view.onmousemove = e => {
+    if(!mouseFlag || !draggingShape) return;
+
+    const dx = e.clientX - prev_location.x,
+          dy = e.clientY - prev_location.y,
+          children = PIXI.customGraphics.getChildren();
+
+    for(let i=0; i<children.length; i++) {
+        if(draggingShape !== children[i]) {
+            if(draggingShape.collisionCheckFromSAT(draggingShape,children[i])) {
+                console.log('collision')
+                draggingShape.updatePath(-prev_total.x,-prev_total.y);
+            }
+        }
+    }
+    prev_total.x = dx;
+    prev_total.y = dy;
+    prev_location.x = e.clientX;
+    prev_location.y = e.clientY;
+
+    draggingShape.updatePath(dx,dy);
+    draggingShape.clear();
+    draggingShape.beginFill(0xFFFFFF);
+    draggingShape.drawPolygon();
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+PIXI.customEvent = class {  // built-in event pool itself
+    static on(eventName,callback) {
+        if(!this.eventName) this.eventName = [];
+        this.eventName.push(callback);
+    }
+    static trigger(eventName,data) {
+        if(!this.eventName) return;
+        else    this.eventName(data);
+    }
+    static removeAtIdxCallback(eventName,idx) {  // Remove any callbacks, if value of idx is boolean(true)
+        if(!this.eventName) throw new Error('not exsist event name');
+        else if(idx === true) this.eventName.length = 0;
+        else this.eventName.splice(idx,1);
+    }
+}
+</script>
+</html>
